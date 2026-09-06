@@ -70,6 +70,11 @@ class ShapeDetector(Node):
         # smaller than this, K is scaled to match; the 3D output is
         # unchanged either way.
         self.declare_parameter("intrinsics_width", 1920)
+        # Writing the annotated video to a file is the headless alternative
+        # to a viewer window: over SSH there is no display to draw on, and
+        # the file can be copied back and watched anywhere.
+        self.declare_parameter("record_path", "")
+        self.declare_parameter("record_fps", 15.0)
 
         self.part3, self.part4, where = load_algorithms(
             self.get_parameter("algorithm_path").value)
@@ -85,6 +90,10 @@ class ShapeDetector(Node):
         self.camera = None
         self.ranging = None
         self.centre_pp = self.get_parameter("centre_principal_point").value
+
+        self.record_path = self.get_parameter("record_path").value
+        self.record_fps = float(self.get_parameter("record_fps").value)
+        self.writer = None
 
         self.bridge = CvBridge()
         self.shapes_pub = self.create_publisher(ShapeArray, "shapes", 10)
@@ -129,27 +138,48 @@ class ShapeDetector(Node):
         depth = self.ranging.update(full)
 
         self.shapes_pub.publish(self.to_message(full, depth, message.header))
-        if self.publish_annotated:
+        if self.publish_annotated or self.record_path:
             annotated = self.part4.annotate_3d(frame, full, depth, self.camera)
-            out = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
-            out.header = message.header
-            self.image_pub.publish(out)
+            if self.publish_annotated:
+                out = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
+                out.header = message.header
+                self.image_pub.publish(out)
+            if self.record_path:
+                self.record(annotated)
         if self.publish_markers:
             self.marker_pub.publish(self.to_markers(full, message.header))
 
         self.frames += 1
         now = time.monotonic()
         if now - self.reported_at >= 5.0:
-            # The achieved rate is the number to set 'rate' to: publish any
-            # faster and frames are dropped, which breaks tracking rather
-            # than merely slowing it, because the tracker assumes it is
-            # looking at consecutive frames.
             achieved = (self.frames - self.reported_frames) / (now - self.reported_at)
             where = "unknown" if depth is None else f"{depth:.1f} in"
             self.get_logger().info(
                 f"{self.frames} frames | {len(full)} shapes | "
                 f"plane depth {where} | {achieved:.2f} fps")
             self.reported_at, self.reported_frames = now, self.frames
+
+    def record(self, annotated):
+        if self.writer is None:
+            height, width = annotated.shape[:2]
+            self.writer = cv2.VideoWriter(
+                self.record_path, cv2.VideoWriter_fourcc(*"mp4v"),
+                self.record_fps, (width, height))
+            if not self.writer.isOpened():
+                self.get_logger().error(f"could not open {self.record_path} for writing")
+                self.record_path = ""
+                self.writer = None
+                return
+            self.get_logger().info(f"recording annotated video to {self.record_path}")
+        self.writer.write(annotated)
+
+    def destroy_node(self):
+        # Without releasing it the file has no index and will not play.
+        if self.writer is not None:
+            self.writer.release()
+            self.get_logger().info(f"wrote {self.record_path}")
+            self.writer = None
+        super().destroy_node()
 
     # -- conversions -------------------------------------------------------
 

@@ -52,6 +52,7 @@ def generate_launch_description():
     rate = LaunchConfiguration("rate")
     annotate = LaunchConfiguration("annotate")
     publish_scale = LaunchConfiguration("publish_scale")
+    record = LaunchConfiguration("record")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -82,6 +83,10 @@ def generate_launch_description():
             "annotate", default_value="true",
             description="publish the drawn-on image; turn off to save a "
                         "full-size image conversion per frame"),
+        DeclareLaunchArgument(
+            "record", default_value="",
+            description="write the annotated video to this path; the headless "
+                        "alternative to a viewer window"),
         DeclareLaunchArgument(
             "view", default_value=str(HAS_DISPLAY).lower(),
             description="open a window showing the annotated video; defaults "
@@ -116,6 +121,8 @@ def generate_launch_description():
                 "circle_radius_in": 10.0,
                 "centre_principal_point": False,
                 "publish_annotated": flag(annotate),
+                "record_path": record,
+                "record_fps": number(rate),
                 "publish_markers": True,
             }],
             remappings=[
