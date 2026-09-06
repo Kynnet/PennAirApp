@@ -17,10 +17,29 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 # The launch file is installed into share/, so the repository is located by
 # environment variable, falling back to the usual clone location.
 DEFAULT_REPO = os.environ.get("PENNAIR_REPO", str(Path.home() / "PennAirApp"))
+
+
+HAS_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
+def number(configuration):
+    """A launch argument spelled as a parameter of a definite type.
+
+    Launch arguments arrive as strings and rclpy infers the type, so
+    'rate:=15' becomes an INTEGER and is refused by a parameter declared as a
+    DOUBLE, while 'rate:=15.0' is accepted. Stating the type here means both
+    spellings work.
+    """
+    return ParameterValue(configuration, value_type=float)
+
+
+def flag(configuration):
+    return ParameterValue(configuration, value_type=bool)
 
 
 def generate_launch_description():
@@ -64,9 +83,9 @@ def generate_launch_description():
             description="publish the drawn-on image; turn off to save a "
                         "full-size image conversion per frame"),
         DeclareLaunchArgument(
-            "view", default_value="true",
-            description="open a window showing the annotated video; set false "
-                        "when running over SSH or without a desktop"),
+            "view", default_value=str(HAS_DISPLAY).lower(),
+            description="open a window showing the annotated video; defaults "
+                        "to whether a display is available"),
         DeclareLaunchArgument(
             "rviz", default_value="false",
             description="also open RViz"),
@@ -78,9 +97,9 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "video_path": video,
-                "loop": loop,
-                "frame_rate": rate,
-                "publish_scale": publish_scale,
+                "loop": flag(loop),
+                "frame_rate": number(rate),
+                "publish_scale": number(publish_scale),
                 "frame_id": "camera",
             }],
             remappings=[("image_raw", "/camera/image_raw")],
@@ -93,10 +112,10 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "algorithm_path": repo,
-                "scale": scale,
+                "scale": number(scale),
                 "circle_radius_in": 10.0,
                 "centre_principal_point": False,
-                "publish_annotated": annotate,
+                "publish_annotated": flag(annotate),
                 "publish_markers": True,
             }],
             remappings=[
