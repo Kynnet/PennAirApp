@@ -30,6 +30,8 @@ def generate_launch_description():
     loop = LaunchConfiguration("loop")
     rviz = LaunchConfiguration("rviz")
     view = LaunchConfiguration("view")
+    rate = LaunchConfiguration("rate")
+    annotate = LaunchConfiguration("annotate")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -46,6 +48,16 @@ def generate_launch_description():
             "loop", default_value="true",
             description="restart the video when it ends"),
         DeclareLaunchArgument(
+            "rate", default_value="0.0",
+            description="frames per second to publish; 0 means the video's own "
+                        "rate. On a slow machine set this to what the detector "
+                        "can actually keep up with, so it sees every frame in "
+                        "order instead of dropping most of them"),
+        DeclareLaunchArgument(
+            "annotate", default_value="true",
+            description="publish the drawn-on image; turn off to save a "
+                        "full-size image conversion per frame"),
+        DeclareLaunchArgument(
             "view", default_value="true",
             description="open a window showing the annotated video; set false "
                         "when running over SSH or without a desktop"),
@@ -61,6 +73,7 @@ def generate_launch_description():
             parameters=[{
                 "video_path": video,
                 "loop": loop,
+                "frame_rate": rate,
                 "frame_id": "camera",
             }],
             remappings=[("image_raw", "/camera/image_raw")],
@@ -76,7 +89,7 @@ def generate_launch_description():
                 "scale": scale,
                 "circle_radius_in": 10.0,
                 "centre_principal_point": False,
-                "publish_annotated": True,
+                "publish_annotated": annotate,
                 "publish_markers": True,
             }],
             remappings=[
