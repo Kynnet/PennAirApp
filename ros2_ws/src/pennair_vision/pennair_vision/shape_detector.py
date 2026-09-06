@@ -10,15 +10,18 @@ that directory to sys.path and imports them. Copying them into the package
 would be simpler to build and would guarantee the two copies drift apart the
 first time either is edited.
 
-Three topics come out:
+Two topics come out:
 
-  shapes           pennair_msgs/ShapeArray -- ids, names, outlines, centres
-                   in pixels and, once the circle has set the scale, in
-                   inches. This is the machine-readable one.
-  image_annotated  sensor_msgs/Image -- the same picture the desktop version
-                   draws, for looking at in rqt_image_view.
-  markers          visualization_msgs/MarkerArray -- outlines and labels for
-                   RViz, so the results can be seen without custom plugins.
+  shapes    pennair_msgs/ShapeArray -- ids, names, outlines, centres in
+            pixels and, once the circle has set the scale, in inches. This
+            is the output the system exists to produce.
+  markers   visualization_msgs/MarkerArray -- the same outlines as RViz
+            markers, for looking at without a custom plugin.
+
+There is deliberately no annotated video here. Publishing a drawn-on frame
+means a second 6.2 MB image per frame, which on a modest machine costs more
+than the detection itself; part3.py and part4.py already draw and record
+video directly when a picture is what is wanted.
 """
 
 import os
@@ -26,8 +29,6 @@ import sys
 import time
 from pathlib import Path
 
-import cv2
-import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point
@@ -64,24 +65,17 @@ class ShapeDetector(Node):
         self.declare_parameter("scale", 0.5)
         self.declare_parameter("circle_radius_in", 10.0)
         self.declare_parameter("centre_principal_point", False)
-        self.declare_parameter("publish_annotated", True)
         self.declare_parameter("publish_markers", True)
         # Width the intrinsic matrix was measured at. If images arrive
         # smaller than this, K is scaled to match; the 3D output is
         # unchanged either way.
         self.declare_parameter("intrinsics_width", 1920)
-        # Writing the annotated video to a file is the headless alternative
-        # to a viewer window: over SSH there is no display to draw on, and
-        # the file can be copied back and watched anywhere.
-        self.declare_parameter("record_path", "")
-        self.declare_parameter("record_fps", 15.0)
 
         self.part3, self.part4, where = load_algorithms(
             self.get_parameter("algorithm_path").value)
         self.get_logger().info(f"loaded detection algorithms from {where}")
 
         self.radius = self.get_parameter("circle_radius_in").value
-        self.publish_annotated = self.get_parameter("publish_annotated").value
         self.publish_markers = self.get_parameter("publish_markers").value
         self.pipeline = self.part3.Pipeline(scale=self.get_parameter("scale").value)
 
@@ -91,13 +85,8 @@ class ShapeDetector(Node):
         self.ranging = None
         self.centre_pp = self.get_parameter("centre_principal_point").value
 
-        self.record_path = self.get_parameter("record_path").value
-        self.record_fps = float(self.get_parameter("record_fps").value)
-        self.writer = None
-
         self.bridge = CvBridge()
         self.shapes_pub = self.create_publisher(ShapeArray, "shapes", 10)
-        self.image_pub = self.create_publisher(Image, "image_annotated", qos_profile_sensor_data)
         self.marker_pub = self.create_publisher(MarkerArray, "markers", 10)
         self.subscription = self.create_subscription(
             Image, "image_raw", self.on_image, qos_profile_sensor_data)
@@ -138,14 +127,6 @@ class ShapeDetector(Node):
         depth = self.ranging.update(full)
 
         self.shapes_pub.publish(self.to_message(full, depth, message.header))
-        if self.publish_annotated or self.record_path:
-            annotated = self.part4.annotate_3d(frame, full, depth, self.camera)
-            if self.publish_annotated:
-                out = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
-                out.header = message.header
-                self.image_pub.publish(out)
-            if self.record_path:
-                self.record(annotated)
         if self.publish_markers:
             self.marker_pub.publish(self.to_markers(full, message.header))
 
@@ -158,28 +139,6 @@ class ShapeDetector(Node):
                 f"{self.frames} frames | {len(full)} shapes | "
                 f"plane depth {where} | {achieved:.2f} fps")
             self.reported_at, self.reported_frames = now, self.frames
-
-    def record(self, annotated):
-        if self.writer is None:
-            height, width = annotated.shape[:2]
-            self.writer = cv2.VideoWriter(
-                self.record_path, cv2.VideoWriter_fourcc(*"mp4v"),
-                self.record_fps, (width, height))
-            if not self.writer.isOpened():
-                self.get_logger().error(f"could not open {self.record_path} for writing")
-                self.record_path = ""
-                self.writer = None
-                return
-            self.get_logger().info(f"recording annotated video to {self.record_path}")
-        self.writer.write(annotated)
-
-    def destroy_node(self):
-        # Without releasing it the file has no index and will not play.
-        if self.writer is not None:
-            self.writer.release()
-            self.get_logger().info(f"wrote {self.record_path}")
-            self.writer = None
-        super().destroy_node()
 
     # -- conversions -------------------------------------------------------
 

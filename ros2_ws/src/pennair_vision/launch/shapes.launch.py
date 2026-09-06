@@ -24,9 +24,6 @@ from launch_ros.parameter_descriptions import ParameterValue
 DEFAULT_REPO = os.environ.get("PENNAIR_REPO", str(Path.home() / "PennAirApp"))
 
 
-HAS_DISPLAY = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-
-
 def number(configuration):
     """A launch argument spelled as a parameter of a definite type.
 
@@ -48,11 +45,8 @@ def generate_launch_description():
     scale = LaunchConfiguration("scale")
     loop = LaunchConfiguration("loop")
     rviz = LaunchConfiguration("rviz")
-    view = LaunchConfiguration("view")
     rate = LaunchConfiguration("rate")
-    annotate = LaunchConfiguration("annotate")
     publish_scale = LaunchConfiguration("publish_scale")
-    record = LaunchConfiguration("record")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -66,7 +60,7 @@ def generate_launch_description():
             "scale", default_value="0.5",
             description="detection downscale factor; lower is faster"),
         DeclareLaunchArgument(
-            "loop", default_value="true",
+            "loop", default_value="false",
             description="restart the video when it ends"),
         DeclareLaunchArgument(
             "rate", default_value="0.0",
@@ -79,18 +73,6 @@ def generate_launch_description():
             description="downscale frames before publishing them. 0.5 cuts "
                         "image traffic fourfold and does not change the 3D "
                         "result; pair it with scale:=1.0"),
-        DeclareLaunchArgument(
-            "annotate", default_value="true",
-            description="publish the drawn-on image; turn off to save a "
-                        "full-size image conversion per frame"),
-        DeclareLaunchArgument(
-            "record", default_value="",
-            description="write the annotated video to this path; the headless "
-                        "alternative to a viewer window"),
-        DeclareLaunchArgument(
-            "view", default_value=str(HAS_DISPLAY).lower(),
-            description="open a window showing the annotated video; defaults "
-                        "to whether a display is available"),
         DeclareLaunchArgument(
             "rviz", default_value="false",
             description="also open RViz"),
@@ -120,29 +102,13 @@ def generate_launch_description():
                 "scale": number(scale),
                 "circle_radius_in": 10.0,
                 "centre_principal_point": False,
-                "publish_annotated": flag(annotate),
-                "record_path": record,
-                "record_fps": number(rate),
                 "publish_markers": True,
             }],
             remappings=[
                 ("image_raw", "/camera/image_raw"),
                 ("shapes", "/shapes"),
-                ("image_annotated", "/shapes/image_annotated"),
                 ("markers", "/shapes/markers"),
             ],
-        ),
-
-        # Neither node opens a window of its own -- they publish, and a
-        # viewer is a separate process. Without this the system runs
-        # correctly and appears to do nothing.
-        Node(
-            package="rqt_image_view",
-            executable="rqt_image_view",
-            name="image_view",
-            arguments=["/shapes/image_annotated"],
-            output="screen",
-            condition=IfCondition(view),
         ),
 
         Node(
