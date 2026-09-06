@@ -214,8 +214,11 @@ def main(args=None):
     try:
         node = ShapeDetector()
         rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            print(f"[shape_detector] {exc.code}", file=sys.stderr)
     finally:
         if node is not None:
             node.destroy_node()

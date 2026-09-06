@@ -29,6 +29,7 @@ def generate_launch_description():
     scale = LaunchConfiguration("scale")
     loop = LaunchConfiguration("loop")
     rviz = LaunchConfiguration("rviz")
+    view = LaunchConfiguration("view")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -44,6 +45,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "loop", default_value="true",
             description="restart the video when it ends"),
+        DeclareLaunchArgument(
+            "view", default_value="true",
+            description="open a window showing the annotated video; set false "
+                        "when running over SSH or without a desktop"),
         DeclareLaunchArgument(
             "rviz", default_value="false",
             description="also open RViz"),
@@ -80,6 +85,18 @@ def generate_launch_description():
                 ("image_annotated", "/shapes/image_annotated"),
                 ("markers", "/shapes/markers"),
             ],
+        ),
+
+        # Neither node opens a window of its own -- they publish, and a
+        # viewer is a separate process. Without this the system runs
+        # correctly and appears to do nothing.
+        Node(
+            package="rqt_image_view",
+            executable="rqt_image_view",
+            name="image_view",
+            arguments=["/shapes/image_annotated"],
+            output="screen",
+            condition=IfCondition(view),
         ),
 
         Node(

@@ -6,12 +6,41 @@ everything downstream is written against a live camera and does not know or
 care that the frames came from disk.
 """
 
+import sys
+from pathlib import Path
+
 import cv2
 import rclpy
 from cv_bridge import CvBridge
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
+
+
+LFS_MAGIC = b"version https://git-lfs"
+
+
+def check_video(path):
+    """Fail loudly, and specifically, before OpenCV fails cryptically.
+
+    The failure worth naming is a Git LFS pointer. A repository cloned
+    without git-lfs installed leaves a 134 byte text file where the video
+    should be, and OpenCV then reports only "moov atom not found" and "this
+    appears to be a text file", neither of which suggests the fix.
+    """
+    video = Path(path)
+    if not video.is_file():
+        raise SystemExit(f"no such file: {path}")
+    with video.open("rb") as handle:
+        head = handle.read(len(LFS_MAGIC))
+    size = video.stat().st_size
+    if head == LFS_MAGIC:
+        raise SystemExit(
+            f"{path} is a Git LFS pointer, not a video ({size} bytes). "
+            "In the repository run:  "
+            "sudo apt install -y git-lfs && git lfs install && git lfs pull")
+    if size < 100_000:
+        raise SystemExit(f"{path} is only {size} bytes; not a playable video")
 
 
 class VideoPublisher(Node):
@@ -26,10 +55,13 @@ class VideoPublisher(Node):
         path = self.get_parameter("video_path").value
         if not path:
             raise SystemExit("video_path parameter is required")
+        check_video(path)
 
         self.capture = cv2.VideoCapture(path)
         if not self.capture.isOpened():
-            raise SystemExit(f"could not open {path}")
+            raise SystemExit(
+                f"OpenCV could not open {path}. If it plays elsewhere, this "
+                "build may lack the codec; try converting it to H.264.")
 
         self.loop = self.get_parameter("loop").value
         self.frame_id = self.get_parameter("frame_id").value
@@ -73,8 +105,13 @@ def main(args=None):
     try:
         node = VideoPublisher()
         rclpy.spin(node)
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
+    except SystemExit as exc:
+        # Without this, launch reports "process has finished cleanly" and the
+        # reason is never printed anywhere.
+        if exc.code not in (None, 0):
+            print(f"[video_publisher] {exc.code}", file=sys.stderr)
     finally:
         if node is not None:
             node.destroy_node()
