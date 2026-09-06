@@ -23,6 +23,7 @@ Three topics come out:
 
 import os
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -65,6 +66,10 @@ class ShapeDetector(Node):
         self.declare_parameter("centre_principal_point", False)
         self.declare_parameter("publish_annotated", True)
         self.declare_parameter("publish_markers", True)
+        # Width the intrinsic matrix was measured at. If images arrive
+        # smaller than this, K is scaled to match; the 3D output is
+        # unchanged either way.
+        self.declare_parameter("intrinsics_width", 1920)
 
         self.part3, self.part4, where = load_algorithms(
             self.get_parameter("algorithm_path").value)
@@ -89,6 +94,8 @@ class ShapeDetector(Node):
             Image, "image_raw", self.on_image, qos_profile_sensor_data)
 
         self.frames = 0
+        self.reported_at = time.monotonic()
+        self.reported_frames = 0
         self.get_logger().info("waiting for images on 'image_raw'")
 
     # -- per frame ---------------------------------------------------------
@@ -98,8 +105,19 @@ class ShapeDetector(Node):
 
         if self.camera is None:
             height, width = frame.shape[:2]
+            native = int(self.get_parameter("intrinsics_width").value)
+            factor = width / float(native)
+            K = self.part4.K_GIVEN.copy()
+            if abs(factor - 1.0) > 1e-6:
+                K[0, 0] *= factor      # fx
+                K[1, 1] *= factor      # fy
+                K[0, 2] *= factor      # cx
+                K[1, 2] *= factor      # cy
+                self.get_logger().info(
+                    f"images arrive at {width}px wide against intrinsics for "
+                    f"{native}px; scaling K by {factor:.3f}")
             self.camera = self.part4.Camera(
-                image_size=(width, height),
+                K=K, image_size=(width, height),
                 centre_principal_point=self.centre_pp)
             self.ranging = self.part4.DepthFromCircle(self.camera)
             self.get_logger().info(
@@ -120,10 +138,18 @@ class ShapeDetector(Node):
             self.marker_pub.publish(self.to_markers(full, message.header))
 
         self.frames += 1
-        if self.frames % 120 == 0:
+        now = time.monotonic()
+        if now - self.reported_at >= 5.0:
+            # The achieved rate is the number to set 'rate' to: publish any
+            # faster and frames are dropped, which breaks tracking rather
+            # than merely slowing it, because the tracker assumes it is
+            # looking at consecutive frames.
+            achieved = (self.frames - self.reported_frames) / (now - self.reported_at)
             where = "unknown" if depth is None else f"{depth:.1f} in"
             self.get_logger().info(
-                f"{self.frames} frames | {len(full)} shapes | plane depth {where}")
+                f"{self.frames} frames | {len(full)} shapes | "
+                f"plane depth {where} | {achieved:.2f} fps")
+            self.reported_at, self.reported_frames = now, self.frames
 
     # -- conversions -------------------------------------------------------
 

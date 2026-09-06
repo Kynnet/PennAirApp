@@ -7,6 +7,7 @@ care that the frames came from disk.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -51,6 +52,12 @@ class VideoPublisher(Node):
         self.declare_parameter("loop", True)
         self.declare_parameter("frame_rate", 0.0)   # 0 => use the file's own rate
         self.declare_parameter("frame_id", "camera")
+        # Transport, not detection, is the bottleneck in a VM: a raw
+        # 1920x1080 BGR image is 6.2 MB, so 30 fps is 188 MB/s through DDS.
+        # Publishing at half size cuts that fourfold and costs nothing --
+        # the 3D result is invariant to image scale, because the focal
+        # lengths and the circle's pixel area both scale together.
+        self.declare_parameter("publish_scale", 1.0)
 
         path = self.get_parameter("video_path").value
         if not path:
@@ -68,6 +75,7 @@ class VideoPublisher(Node):
         rate = self.get_parameter("frame_rate").value or \
             self.capture.get(cv2.CAP_PROP_FPS) or 30.0
 
+        self.publish_scale = float(self.get_parameter("publish_scale").value)
         self.bridge = CvBridge()
         # Sensor QoS: best effort, keep last. A frame is only useful while it
         # is current, so dropping one under load beats queueing it and falling
@@ -76,6 +84,8 @@ class VideoPublisher(Node):
         self.publisher = self.create_publisher(Image, "image_raw", qos_profile_sensor_data)
         self.timer = self.create_timer(1.0 / rate, self.tick)
         self.frames = 0
+        self.reported_at = time.monotonic()
+        self.reported_frames = 0
         self.get_logger().info(f"publishing {path} on 'image_raw' at {rate:.2f} fps")
 
     def tick(self):
@@ -89,14 +99,24 @@ class VideoPublisher(Node):
             if not ok:
                 raise SystemExit("could not rewind the video")
 
+        if self.publish_scale != 1.0:
+            frame = cv2.resize(frame, None, fx=self.publish_scale,
+                               fy=self.publish_scale, interpolation=cv2.INTER_AREA)
         message = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
         message.header.stamp = self.get_clock().now().to_msg()
         message.header.frame_id = self.frame_id
         self.publisher.publish(message)
 
+        # Report every few seconds rather than every N frames: at a low
+        # publish rate a frame-count interval goes quiet for over a minute
+        # and the system looks hung when it is merely slow.
         self.frames += 1
-        if self.frames % 120 == 0:
-            self.get_logger().info(f"published {self.frames} frames")
+        now = time.monotonic()
+        if now - self.reported_at >= 5.0:
+            achieved = (self.frames - self.reported_frames) / (now - self.reported_at)
+            self.get_logger().info(
+                f"published {self.frames} frames ({achieved:.1f} fps)")
+            self.reported_at, self.reported_frames = now, self.frames
 
 
 def main(args=None):

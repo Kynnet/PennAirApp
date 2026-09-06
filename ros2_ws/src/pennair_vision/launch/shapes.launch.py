@@ -32,6 +32,7 @@ def generate_launch_description():
     view = LaunchConfiguration("view")
     rate = LaunchConfiguration("rate")
     annotate = LaunchConfiguration("annotate")
+    publish_scale = LaunchConfiguration("publish_scale")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -54,6 +55,11 @@ def generate_launch_description():
                         "can actually keep up with, so it sees every frame in "
                         "order instead of dropping most of them"),
         DeclareLaunchArgument(
+            "publish_scale", default_value="1.0",
+            description="downscale frames before publishing them. 0.5 cuts "
+                        "image traffic fourfold and does not change the 3D "
+                        "result; pair it with scale:=1.0"),
+        DeclareLaunchArgument(
             "annotate", default_value="true",
             description="publish the drawn-on image; turn off to save a "
                         "full-size image conversion per frame"),
@@ -74,6 +80,7 @@ def generate_launch_description():
                 "video_path": video,
                 "loop": loop,
                 "frame_rate": rate,
+                "publish_scale": publish_scale,
                 "frame_id": "camera",
             }],
             remappings=[("image_raw", "/camera/image_raw")],
